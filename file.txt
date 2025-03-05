@@ -1,0 +1,598 @@
+main.py:-
+from flask import Flask, render_template, request, jsonify
+import sqlite3
+from datetime import datetime
+
+app = Flask(__name__)
+
+def get_db_connection(db_name):
+    conn = sqlite3.connect(db_name)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+card_head = "Squad Showdown: Season 1"
+card_para = "Game: Mobile Legends, Game Type: Squad Vs Squad, Registration Fee: ₹300, First Winning Prize: ₹1300, Second Winning Prize: ₹700"
+modal_para = """
+        Join the ultimate battle and prove your skills in this thrilling tournament with exciting cash prizes! The tournament features Mobile Legends in a Squad vs Squad format, with a registration fee of ₹300 per squad and the first winning prize will be ₹1400 and second prize will be ₹700 (paid via GPay). The registration is open now, it will close on _th March. Matches will be held online, allowing players to compete from home. The knockout format includes 8 squads battling in three rounds, with the match starting at 09:00AM on _th March. Prize money will be transferred to the winner's GPay number, and further details will be shared via WhatsApp upon registration. Are you ready for the challenge? Register now and dominate the battlefield!
+"""
+        
+def insert_card_if_not_exists():
+    conn = get_db_connection("mobile_legends_form_data.db")
+    cursor = conn.cursor()
+
+    # Check if the card already exists
+    cursor.execute("SELECT COUNT(*) FROM cards WHERE Card_Head = ?", (card_head,))
+    count = cursor.fetchone()[0]
+
+    if count == 0:
+        cursor.execute("""
+        INSERT INTO cards (Card_Head, Card_Para, Modal_Para) 
+        VALUES (?, ?, ?)
+        """, (card_head, card_para, modal_para))
+        conn.commit()
+    
+    conn.close()
+
+insert_card_if_not_exists()
+
+# conn = sqlite3.connect("mobile_legends_register_form.db")
+# cursor = conn.cursor()
+# cursor.execute("delete from registrations")
+# conn.commit()
+# conn.close()
+
+@app.route("/")
+def index():
+    conn = get_db_connection('mobile_legends_form_data.db')
+    c = conn.cursor()
+    c.execute("SELECT * FROM cards")
+    cards = c.fetchall()
+    conn.close()
+
+    # Check if there are any cards
+    if not cards:
+        return render_template("index.html", cards=None)
+    
+    return render_template("index.html", cards=cards)
+
+@app.route("/view_matches")
+def view_matches():
+    return render_template("view_matches.html")
+
+@app.route("/about_me")
+def about_me():
+    return render_template("about_me.html")
+
+@app.route("/register", methods=["POST"])
+def register():
+    data = request.get_json()
+    name = data['name']
+    email = data['email']
+    squad_name = data['squad_name']
+    squad_id = data['squad_id']
+    phone = data['phone']
+    state = data['state']
+    event_name = data['event_name']  # Get dynamic event name from frontend
+    registration_time = datetime.now().strftime("%Y-%m-%d %I:%M %p")
+
+    try:
+        conn = get_db_connection('mobile_legends_register_form.db')
+        c = conn.cursor()
+
+        # Check if the user is already registered using email or phone
+        c.execute("SELECT COUNT(*) FROM registrations WHERE (email = ? OR phone = ?) AND event_name = ?", (email, phone, event_name))
+        count = c.fetchone()[0]
+
+        if count > 0:
+            conn.close()
+            return jsonify({"success": False, "message": "You are already registered for this event."})
+
+        # Check the number of registrations for this event
+        c.execute("SELECT COUNT(*) FROM registrations WHERE event_name = ?", (event_name,))
+        count = c.fetchone()[0]
+
+        if count >= 8:  # Limit per event
+            conn.close()
+            return jsonify({"success": False, "message": "Registration full for this event. Try another event."})
+
+        # Insert new registration
+        c.execute("INSERT INTO registrations (name, email, squad_name, squad_id, phone, state, event_name, registration_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  (name, email, squad_name, squad_id, phone, state, event_name, registration_time))
+        conn.commit()
+        conn.close()
+
+        return jsonify({"success": True, "message": "Registration successful! We will contact you on WhatsApp shortly to confirm your payment and provide more details regarding the match. Thank you for your participation!"})
+
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        return jsonify({"success": False, "message": "Registration failed due to a database error. Please try again later."})
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return jsonify({"success": False, "message": "Registration failed due to an unexpected error. Please try again later."})
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
+
+index.js:-
+function toggleMenu() {
+  let sidebar = document.getElementById("sidebar");
+  if (sidebar.style.left === "0px") {
+    sidebar.style.left = "-250px";
+  } else {
+    sidebar.style.left = "0px";
+  }
+}
+
+function toggleDropdown() {
+  let dropdownContent = document.getElementById("dropdownContent");
+  if (dropdownContent.style.display === "block") {
+    dropdownContent.style.display = "none";
+  } else {
+    dropdownContent.style.display = "block";
+  }
+}
+
+function showModal(modalContent) {
+  document.getElementById("Modal_Para").innerText = modalContent;
+  document.getElementById("detailsModal").style.display = "flex";
+}
+
+function closeModal() {
+  document.getElementById("detailsModal").style.display = "none";
+}
+
+function registerModal() {
+  document.getElementById("registerModal").style.display = "flex";
+}
+
+function closeSignUpModal() {
+  document.getElementById("registerModal").style.display = "none";
+}
+
+function registerModal(event) {
+  let card = event.target.closest(".game-card");
+  let eventName = card.querySelector("#Card_Head").innerText; // Get event name dynamically
+  document.getElementById("registerModal").dataset.eventName = eventName;
+  document.getElementById("registerModal").style.display = "flex";
+}
+
+document.getElementById("registerForm").addEventListener("submit", function (event) {
+  event.preventDefault();
+
+  let name = document.getElementById("name").value.trim();
+  let email = document.getElementById("email").value.trim();
+  let squad_name = document.getElementById("squad_name").value.trim();
+  let squad_id = document.getElementById("squadid").value.trim();
+  let phone = document.getElementById("phone").value.trim();
+  let state = document.getElementById("state").value;
+  let event_name = document.getElementById("registerModal").dataset.eventName; // Get event name
+
+  if (!name || !email || !squad_name || !squad_id || !phone || !state) {
+    alert("Please fill in all fields.");
+    return;
+  }
+
+  // Show "Please wait" alert
+  alert("Please wait while we process your registration...");
+
+  fetch("/register", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: name,
+      email: email,
+      squad_name: squad_name,
+      squad_id: squad_id,
+      phone: phone,
+      state: state,
+      event_name: event_name, // Send event name
+    }),
+  })
+  .then(response => {
+    if (!response.ok) {
+      throw new Error("Network response was not ok");
+    }
+    return response.json();
+  })
+  .then(data => {
+    alert(data.message);
+    if (data.success) {
+      closeSignUpModal();
+    }
+  })
+  .catch((error) => {
+    console.error("Error:", error);
+    alert("Registration failed due to a network or server error. Please try again later.");
+  });
+});
+
+index.html:-
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NEXUSHUB</title>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/index.css') }}"
+    />
+  </head>
+  <body>
+    <div class="navbar">
+      <i class="fas fa-bars menu-icon" onclick="toggleMenu()"></i>
+      <h1 id="heading-glow">NEXUSHUB</h1>
+    </div>
+
+    <div class="sidebar" id="sidebar">
+      <div class="dropdown">
+        <button class="dropbtn" onclick="toggleDropdown()">
+          Select Game <i class="fas fa-caret-down"></i>
+        </button>
+        <div class="dropdown-content" id="dropdownContent">
+          <a href="{{url_for('index')}}">Mobile Legends (Sq Vs Sq)</a>
+        </div>
+      </div>
+      <a href="{{url_for('view_matches')}}">View Matches</a>
+      <a href="{{url_for('about_me')}}">About Me</a>
+    </div>
+
+    <div class="game">
+      {% if cards %} {% for card in cards %}
+      <div class="game-card">
+        <img
+          src="{{ url_for('static', filename='img/game.jpg') }}"
+          alt="Game Image"
+        />
+        <div class="content">
+          <h2 id="Card_Head">{{ card['Card_Head'] }}</h2>
+          <p id="Card_Para">{{ card['Card_Para'] }}</p>
+        </div>
+        <div class="buttons">
+          <button onclick="registerModal(event)">Register Now</button>
+          <button onclick="showModal(`{{ card['Modal_Para'] }}`)">
+            Show More Details
+          </button>
+        </div>
+      </div>
+      {% endfor %} {% else %}
+      <p>No tournament available.</p>
+      {% endif %}
+
+      <!-- Game Details Modal -->
+      <div id="detailsModal" class="modal">
+        <div class="modal-content">
+          <h2>Game Details</h2>
+          <p id="Modal_Para"></p>
+          <button class="close-btn" onclick="closeModal()">Close</button>
+        </div>
+      </div>
+
+      <!-- Sign-Up Modal -->
+      <div id="registerModal" class="modal">
+        <div class="modal-content">
+          <h2>Register Now</h2>
+          <form id="registerForm">
+            <input type="text" id="name" placeholder="Name" required />
+            <input type="email" id="email" placeholder="Email" required />
+            <input
+              type="text"
+              id="squad_name"
+              placeholder="Squad Name"
+              required
+            />
+            <input
+              type="number"
+              id="squadid"
+              placeholder="Your Squad ID"
+              required
+            />
+            <input
+              type="tel"
+              id="phone"
+              placeholder="Phone Number (WhatsApp)"
+              required
+            />
+            <select id="state" required>
+              <option value="">Select State</option>
+              <option value="Nagaland">Nagaland</option>
+              <option value="Delhi">Delhi</option>
+              <option value="Goa">Goa</option>
+            </select>
+            <button type="submit">Submit</button>
+          </form>
+          <button class="close-btn" onclick="closeSignUpModal()">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/index.js') }}"></script>
+  </body>
+</html>
+
+style.css:-
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: Arial, sans-serif;
+}
+
+body {
+  background: linear-gradient(135deg, #1e1e1e, #2c3e50, #8e44ad);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+/* Navbar Styles */
+.navbar {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 15px;
+  background: rgba(30, 30, 30, 0.8);
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  backdrop-filter: blur(10px);
+}
+
+.menu-icon {
+  position: absolute;
+  left: 20px;
+  font-size: 24px;
+  cursor: pointer;
+}
+
+.sidebar {
+  position: fixed;
+  top: 0;
+  left: -250px;
+  width: 250px;
+  height: 100%;
+  background: rgba(34, 34, 34, 0.9);
+  transition: 0.3s;
+  padding-top: 60px;
+  backdrop-filter: blur(10px);
+}
+
+.sidebar a {
+  display: block;
+  padding: 15px;
+  text-decoration: none;
+  color: white;
+  font-size: 18px;
+}
+
+.sidebar a:hover {
+  background: rgba(51, 51, 51, 0.9);
+}
+
+#heading-glow {
+  text-shadow: 0 0 10px rgba(0, 255, 255, 0.5),
+    /* Cyan glow */ 0 0 20px rgba(0, 255, 255, 0.3),
+    /* Outer cyan glow */ 0 0 30px rgba(0, 255, 255, 0.2); /* Faint outer cyan glow */
+}
+
+/* Dropdown Styles */
+.dropdown {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+}
+
+.dropbtn {
+  background-color: rgba(34, 34, 34, 0.9);
+  color: white;
+  padding: 15px;
+  font-size: 18px;
+  border: none;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+
+.dropbtn:hover {
+  background-color: rgba(51, 51, 51, 0.9);
+}
+
+.dropdown-content {
+  display: none;
+  background-color: rgba(51, 51, 51, 0.9);
+  width: 100%;
+  box-shadow: 0px 8px 16px 0px rgba(0, 0, 0, 0.2);
+  z-index: 1;
+}
+
+.dropdown-content a {
+  color: white;
+  padding: 15px;
+  text-decoration: none;
+  display: block;
+  text-align: left;
+}
+
+.dropdown-content a:hover {
+  background-color: rgba(68, 68, 68, 0.9);
+}
+
+/* Card Styles */
+.game-card {
+  background: rgba(30, 30, 30, 0.8);
+  width: 300px;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-top: 80px;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.5),
+    /* Cyan glow */ 0 0 20px rgba(0, 255, 255, 0.3),
+    /* Outer cyan glow */ 0 0 30px rgba(0, 255, 255, 0.2); /* Faint outer cyan glow */
+}
+
+.game-card img {
+  width: 100%;
+  height: auto;
+}
+
+.game-card .content {
+  padding: 15px;
+}
+
+.game-card .content h2 {
+  font-size: 20px;
+  margin-bottom: 10px;
+}
+
+.game-card .content p {
+  font-size: 14px;
+  color: #bbb;
+}
+
+.buttons {
+  display: flex;
+  justify-content: space-around;
+  padding: 15px;
+}
+
+.buttons button {
+  background: #ff9800;
+  color: white;
+  border: none;
+  padding: 10px 15px;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: 0.3s;
+}
+
+.buttons button:hover {
+  background: #e68900;
+}
+
+/* Modal Styles */
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.6);
+  justify-content: center;
+  align-items: center;
+}
+
+.modal-content {
+  background: rgba(30, 30, 30, 0.9);
+  padding: 20px;
+  border-radius: 10px;
+  width: 80%;
+  max-width: 400px;
+  text-align: center;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.modal-content h2 {
+  margin-bottom: 10px;
+}
+
+.modal-content input,
+.modal-content select {
+  width: 100%;
+  padding: 10px;
+  margin: 10px 0;
+  border-radius: 5px;
+  border: none;
+}
+
+.modal-content button {
+  width: 100%;
+  background: #ff9800;
+  color: white;
+  border: none;
+  padding: 10px;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: 0.3s;
+}
+
+.modal-content button:hover {
+  background: #e68900;
+}
+
+.close-btn {
+  background: #ff4444;
+  color: white;
+  border: none;
+  padding: 10px;
+  cursor: pointer;
+  border-radius: 5px;
+  margin-top: 15px;
+}
+
+.close-btn:hover {
+  background: #cc0000;
+}
+
+/* About Me Styles */
+.about-me {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  width: 100%;
+  padding-top: 80px;
+  position: absolute;
+  z-index: -999;
+}
+
+.profile-card {
+  background: #1e1e1ecc;
+  padding: 20px;
+  border-radius: 10px;
+  text-align: center;
+  max-width: 320px;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.5),
+    /* Cyan glow */ 0 0 20px rgba(0, 255, 255, 0.3),
+    /* Outer cyan glow */ 0 0 30px rgba(0, 255, 255, 0.2); /* Faint outer cyan glow */
+}
+
+.profile-pic {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  object-fit: cover;
+  margin-bottom: 15px;
+  border: 3px solid #ff9800;
+}
+
+.profile-card p {
+  font-size: 14px;
+  color: #bbb;
+}
+
+.social-links {
+  margin-top: 15px;
+}
+
+.social-links a {
+  color: white;
+  margin: 0 10px;
+  font-size: 20px;
+}
